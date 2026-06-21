@@ -2,14 +2,12 @@ import React, { useState, useEffect, useRef } from 'react'
 
 const API_URL = "https://n47nhob5fe.execute-api.us-east-1.amazonaws.com/prod/chat";
 const CUSTOMER_ID = "test_user_1";
-const CUSTOMER_INITIALS = "A";
+const CUSTOMER_INITIALS = "👤";
 
 const SUGGESTIONS = [
-  "I want a beach holiday 🏖️",
-  "Family trip ideas",
-  "Zanzibar packages",
-  "Dubai in December",
-  "Budget under $1500"
+  "Show me packages ✈️",
+  "Luxury trips 💎",
+  "Budget under $500 💰"
 ];
 
 function App() {
@@ -22,6 +20,19 @@ function App() {
     const saved = localStorage.getItem("katim_sessions");
     return saved ? JSON.parse(saved) : {};
   });
+  const [theme, setTheme] = useState(() => {
+    const saved = localStorage.getItem("katim_theme");
+    return saved ? saved : "dark";
+  });
+
+  const toggleTheme = () => {
+    setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+  };
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem("katim_theme", theme);
+  }, [theme]);
   const [isTyping, setIsTyping] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [activeSuggestions, setActiveSuggestions] = useState([]);
@@ -80,7 +91,7 @@ function App() {
     sendToKatimAi(newId, "Hello");
   };
 
-  // New chat helper (clears active screen/starts fresh session)
+  // New chat helper (clears active screen/starts fresh session and starts conversation automatically)
   const newChat = () => {
     const newId = "session_" + Date.now();
     setCurrentSessionId(newId);
@@ -91,6 +102,32 @@ function App() {
     setActiveSuggestions([]);
     setSidebarOpen(false);
     sendToKatimAi(newId, "Hello");
+  };
+
+
+
+  const handleQuickStart = async (query) => {
+    const newId = "session_" + Date.now();
+    setCurrentSessionId(newId);
+
+    const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const userMsg = {
+      id: 'msg_user_' + Date.now(),
+      role: 'user',
+      text: query,
+      time: now
+    };
+
+    setSessions(prev => ({
+      ...prev,
+      [newId]: [userMsg]
+    }));
+
+    saveSessionToHistory(newId, query);
+    setActiveSuggestions([]);
+    setSidebarOpen(false);
+
+    await sendToKatimAi(newId, query);
   };
 
   // Load an existing session
@@ -192,20 +229,40 @@ function App() {
         });
       } else if (body.type === "results") {
         newMessages.push({
-          id: 'msg_katim_ai_' + Date.now() + '_1',
+          id: 'msg_katim_ai_' + Date.now(),
           role: 'katim-ai',
+          type: 'results',
           text: body.message,
+          packages: body.packages || [],
           time: now
         });
-        if (body.packages && body.packages.length > 0) {
-          newMessages.push({
-            id: 'msg_katim_ai_' + Date.now() + '_2',
-            role: 'katim-ai',
-            type: 'results',
-            packages: body.packages,
-            time: now
-          });
-        }
+      } else if (body.type === "no_results") {
+        newMessages.push({
+          id: 'msg_katim_ai_' + Date.now(),
+          role: 'katim-ai',
+          type: 'results',
+          text: body.message,
+          packages: body.recommendations || [],
+          time: now
+        });
+      } else if (body.type === "booking_ready" && body.package) {
+        newMessages.push({
+          id: 'msg_katim_ai_' + Date.now(),
+          role: 'katim-ai',
+          type: 'booking_ready',
+          text: body.message,
+          package: body.package,
+          time: now
+        });
+      } else if (body.type === "package_detail" && body.package) {
+        newMessages.push({
+          id: 'msg_katim_ai_' + Date.now(),
+          role: 'katim-ai',
+          type: 'package_detail',
+          text: body.message,
+          package: body.package,
+          time: now
+        });
       } else {
         newMessages.push({
           id: 'msg_katim_ai_' + Date.now(),
@@ -220,8 +277,7 @@ function App() {
         const merged = [...currentList, ...newMessages];
 
         // Show suggestions if normal message count is <= 2
-        // We filter out structural rows like results and handoffs from count check
-        const normalMsgCount = merged.filter(m => !m.type || (m.type !== 'results' && m.type !== 'whatsapp_handoff')).length;
+        const normalMsgCount = merged.length;
         if (normalMsgCount <= 2) {
           setActiveSuggestions(SUGGESTIONS);
         }
@@ -274,7 +330,7 @@ function App() {
   };
 
   const handleHandoffClick = (summary) => {
-    window.location.href = "https://wa.me/1234567890?text=" + encodeURIComponent(summary || "Hi, I need help with my travel booking");
+    window.open("https://wa.me/1234567890?text=" + encodeURIComponent(summary || "Hi, I need help with my travel booking"), "_blank");
   };
 
   return (
@@ -285,7 +341,9 @@ function App() {
       {/* Sidebar — chat history */}
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <div className="sidebar-header">
-          <div className="logo">Katim <span>Travels</span></div>
+          <div className="sidebar-title-row">
+            <div className="logo">Katim <span>Travels</span></div>
+          </div>
           <div className="tagline">Your journey starts here</div>
         </div>
 
@@ -338,169 +396,346 @@ function App() {
         {currentSessionId === null ? (
           <div className="welcome">
             <button className="sidebar-toggle-btn welcome-toggle" onClick={() => setSidebarOpen(true)}>☰ View Conversations</button>
-            <div className="welcome-icon">🌍</div>
-            <div className="welcome-title">Meet Katim Ai</div>
-            <div className="welcome-sub">Your personal AI travel advisor from Katim Travels. Tell me where you want to go and I'll take care of the rest.</div>
-            <button className="start-btn" onClick={startChat}>Start Planning My Trip</button>
+
+            <div className="welcome-hero">
+              <div className="welcome-badge">PREMIUM TRAVEL ADVISOR</div>
+              <h1 className="welcome-title">Discover Your Next Adventure with <span>Katim AI</span></h1>
+              <p className="welcome-sub">
+                Your bespoke AI travel companion from Katim Travels. Explore custom packages, seek destination insights, or plan your dream itinerary in real-time.
+              </p>
+
+              <button className="start-btn" onClick={startChat}>
+                Start Planning My Trip ➔
+              </button>
+            </div>
+
+            <div className="welcome-features-section">
+              <h3 className="section-subtitle">How can I assist you today?</h3>
+              <div className="welcome-features-grid">
+                <div className="feature-item-card" onClick={() => handleQuickStart("Show me popular city break destinations 🏙️")}>
+                  <div className="feature-icon">🏙️</div>
+                  <h4>City Breaks</h4>
+                  <p>Discover vibrant cities, iconic landmarks, and unforgettable urban experiences.</p>
+                  <span className="feature-action-link">Explore cities ➔</span>
+                </div>
+
+                <div className="feature-item-card" onClick={() => handleQuickStart("Show me beach and island holiday packages 🏖️")}>
+                  <div className="feature-icon">🏖️</div>
+                  <h4>Beach & Islands</h4>
+                  <p>Relax on pristine shores, turquoise waters, and tropical island paradises.</p>
+                  <span className="feature-action-link">Find beach trips ➔</span>
+                </div>
+
+                <div className="feature-item-card" onClick={() => handleQuickStart("Recommend adventure and outdoor travel packages 🏔️")}>
+                  <div className="feature-icon">🏔️</div>
+                  <h4>Adventure Travel</h4>
+                  <p>Hike mountains, trek forests, and explore wild landscapes worldwide.</p>
+                  <span className="feature-action-link">Start an adventure ➔</span>
+                </div>
+
+                <div className="feature-item-card" onClick={() => handleQuickStart("Show me luxury travel packages worldwide 💎")}>
+                  <div className="feature-icon">💎</div>
+                  <h4>Luxury Escapes</h4>
+                  <p>Indulge in five-star resorts, private villas, and bespoke travel experiences.</p>
+                  <span className="feature-action-link">Browse luxury ➔</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="welcome-footer-tag">
+              ⚡ <span>Trusted by travelers across the globe</span>
+            </div>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             <div className="chat-header">
               <div className="chat-header-left">
-                <button className="sidebar-toggle-btn" onClick={() => setSidebarOpen(true)}>☰</button>
                 <div className="chat-brand">
                   <span className="chat-logo-text">Katim AI</span>
                   <span className="online-indicator"></span>
                 </div>
               </div>
-              <button className="icon-btn" title="Clear chat" onClick={newChat}>
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                  <path d="M16 9v10H8V9h8m-1.5-6h-5l-1 1H5v2h14V4h-3.5l-1-1zM18 7H6v12c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7z"/>
-                </svg>
-              </button>
+              <div className="chat-header-actions">
+                <button className="theme-toggle-btn" onClick={toggleTheme} title="Toggle Theme">
+                  {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
+                </button>
+              </div>
             </div>
 
             <div className="messages">
-              {currentMessages.map((msg) => {
-                if (msg.type === 'whatsapp_handoff') {
-                  return (
-                    <div key={msg.id} className="handoff-card">
-                      <div className="handoff-content">
-                        <svg className="whatsapp-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                          <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.455L0 24zm6.59-4.846c1.6.95 3.488 1.45 5.41 1.451 5.378 0 9.755-4.373 9.758-9.755.002-2.607-1.011-5.059-2.854-6.904C17.077 2.1 14.624.95 12.012.95c-5.383 0-9.76 4.373-9.763 9.756-.001 1.887.49 3.729 1.42 5.356L2.686 21.57l5.96-1.562zm10.741-6.732c-.27-.136-1.602-.79-1.85-.88-.25-.09-.43-.136-.61.136-.18.27-.7.88-.86 1.06-.16.18-.32.2-.59.065-2.28-1.127-3.77-2.124-4.88-4.026-.26-.45.26-.42.74-1.38.08-.16.04-.3-.02-.436-.06-.137-.61-1.473-.83-2.022-.22-.52-.47-.45-.64-.46H7.9c-.18 0-.47.07-.71.32-.24.25-.92.902-.92 2.2 0 1.3.94 2.56 1.07 2.73.13.17 1.86 2.839 4.5 3.98.63.27 1.12.44 1.5.56.63.2 1.2.17 1.66.1 1.13-.17 1.6-.69 1.77-1.14.17-.45.17-.84.12-.927-.05-.08-.18-.13-.45-.26z" />
-                        </svg>
-                        <span className="handoff-message-text">Our team will reach out shortly</span>
-                      </div>
-                      <button className="handoff-btn" onClick={() => handleHandoffClick(msg.handoff_summary)}>
-                        Open WhatsApp
-                      </button>
-                    </div>
-                  );
-                }
+              <div className="messages-column">
+                {(() => {
+                  const groups = [];
+                  currentMessages.forEach((msg) => {
+                    const last = groups[groups.length - 1];
+                    if (last && last.role === msg.role) {
+                      last.items.push(msg);
+                    } else {
+                      groups.push({
+                        role: msg.role,
+                        items: [msg]
+                      });
+                    }
+                  });
 
-                if (msg.type === 'results') {
-                  return (
-                    <div key={msg.id} className="msg-row results-message-row">
-                      <div className="msg-avatar katim-ai">✈️</div>
-                      <div className="msg-content results-message-content">
-                        <div className="msg-name">Katim Ai</div>
-                        <div className="packages-container">
-                          {msg.packages && msg.packages.map((pkg, idx) => {
-                            return (
-                              <div key={`${msg.id}_pkg_${idx}`} className="package-card">
-                                <div className="package-image-wrap">
-                                  {pkg.image ? (
-                                    <img src={pkg.image} alt={pkg.name} className="package-image" />
-                                  ) : (
-                                    <div className="package-image-placeholder">
-                                      <span>🗺️</span>
+                  return groups.map((group, groupIdx) => {
+                    const isUser = group.role === 'user';
+                    const firstMsg = group.items[0];
+                    return (
+                      <div key={`group_${groupIdx}`} className={`msg-group ${isUser ? 'user' : 'katim-ai'}`}>
+                        <div className="msg-group-content">
+                          <div className="msg-bubbles-list">
+                            {group.items.map((msg) => {
+                              if (msg.type === 'whatsapp_handoff') {
+                                return (
+                                  <div key={msg.id} className="handoff-card">
+                                    <div className="handoff-content">
+                                      <div className="whatsapp-icon-badge">
+                                        <svg viewBox="0 0 24 24" width="22" height="22" fill="#ffffff">
+                                          <path d="M12.001 2C6.479 2 2.003 6.477 2.003 12c0 1.849.504 3.682 1.463 5.284L2 22l4.833-1.437A9.955 9.955 0 0 0 12.001 22C17.523 22 22 17.523 22 12S17.523 2 12.001 2zm0 18.18a8.162 8.162 0 0 1-4.159-1.139l-.298-.177-3.085.917.877-3.019-.193-.31A8.154 8.154 0 0 1 3.82 12c0-4.512 3.669-8.18 8.181-8.18 4.512 0 8.18 3.668 8.18 8.18 0 4.511-3.668 8.18-8.18 8.18zm4.495-6.123c-.246-.123-1.457-.719-1.683-.801-.226-.082-.39-.123-.554.123-.164.246-.636.801-.78.966-.144.164-.287.185-.533.062-1.53-.765-2.536-1.367-3.544-3.1-.268-.46.268-.428.766-1.425.082-.164.041-.308-.021-.43-.062-.124-.554-1.336-.759-1.83-.2-.481-.404-.414-.554-.421h-.472c-.164 0-.43.062-.656.308-.226.245-.863.844-.863 2.058 0 1.214.884 2.387.997 2.551.113.164 1.748 2.668 4.237 3.741.592.256 1.053.41 1.412.525.594.19 1.135.163 1.562.099 1.01-.154 1.498-.632 1.664-1.055.166-.423.166-.785.103-.86-.062-.082-.226-.144-.472-.267z"/>
+                                        </svg>
+                                      </div>
+                                      <div className="handoff-text-group">
+                                        <span className="handoff-label">WhatsApp</span>
+                                        <span className="handoff-message-text">Our team will reach out shortly</span>
+                                      </div>
                                     </div>
-                                  )}
-                                  <div className="package-gradient-overlay" />
-                                  <h4 className="package-title">{pkg.name || 'Travel Package'}</h4>
-                                </div>
-                                <div className="package-info-body">
-                                  <div className="package-meta-row">
-                                    <span className="package-duration">
-                                      <svg className="calendar-icon" viewBox="0 0 24 24" width="12" height="12" fill="currentColor">
-                                        <path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z"/>
+                                    <button className="handoff-btn" onClick={() => handleHandoffClick(msg.handoff_summary)}>
+                                      <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style={{flexShrink:0}}>
+                                        <path d="M12.001 2C6.479 2 2.003 6.477 2.003 12c0 1.849.504 3.682 1.463 5.284L2 22l4.833-1.437A9.955 9.955 0 0 0 12.001 22C17.523 22 22 17.523 22 12S17.523 2 12.001 2zm0 18.18a8.162 8.162 0 0 1-4.159-1.139l-.298-.177-3.085.917.877-3.019-.193-.31A8.154 8.154 0 0 1 3.82 12c0-4.512 3.669-8.18 8.181-8.18 4.512 0 8.18 3.668 8.18 8.18 0 4.511-3.668 8.18-8.18 8.18zm4.495-6.123c-.246-.123-1.457-.719-1.683-.801-.226-.082-.39-.123-.554.123-.164.246-.636.801-.78.966-.144.164-.287.185-.533.062-1.53-.765-2.536-1.367-3.544-3.1-.268-.46.268-.428.766-1.425.082-.164.041-.308-.021-.43-.062-.124-.554-1.336-.759-1.83-.2-.481-.404-.414-.554-.421h-.472c-.164 0-.43.062-.656.308-.226.245-.863.844-.863 2.058 0 1.214.884 2.387.997 2.551.113.164 1.748 2.668 4.237 3.741.592.256 1.053.41 1.412.525.594.19 1.135.163 1.562.099 1.01-.154 1.498-.632 1.664-1.055.166-.423.166-.785.103-.86-.062-.082-.226-.144-.472-.267z"/>
                                       </svg>
-                                      {pkg.duration ? `${pkg.duration} Days` : 'Flexible'}
-                                    </span>
-                                    {pkg.price && pkg.price > 0 ? (
-                                      <span className="package-price price-gold">From ${Math.round(pkg.price)}</span>
-                                    ) : (
-                                      <span className="package-price price-request">Price on request</span>
-                                    )}
+                                      Open WhatsApp
+                                    </button>
                                   </div>
-                                  <p className="package-description" title={pkg.description}>
-                                    {pkg.description || ''}
-                                  </p>
-                                  <button
-                                    className="package-book-btn"
-                                    onClick={() => setActiveDetailPackage(pkg)}
-                                  >
-                                    View Package
-                                  </button>
-                                </div>
-                              </div>
-                            );
-                          })}
+                                );
+                              }
+
+                              if (msg.type === 'results') {
+                                return (
+                                  <div key={msg.id} className="results-bubble-container">
+                                    {msg.text && (
+                                      <div className="bubble katim-ai" style={{ marginBottom: '12px' }}>
+                                        {msg.text}
+                                      </div>
+                                    )}
+                                    <div className="packages-container">
+                                      {msg.packages && msg.packages.map((pkg, idx) => (
+                                        <div key={`${msg.id}_pkg_${idx}`} className="package-card">
+                                          <div className="package-image-wrap">
+                                            {pkg.image ? (
+                                              <img src={pkg.image} alt={pkg.name} className="package-image" />
+                                            ) : (
+                                              <div className="package-image-placeholder">
+                                                <span>🗺️</span>
+                                              </div>
+                                            )}
+                                            <div className="package-gradient-overlay" />
+                                            <h4 className="package-title">{pkg.name || 'Travel Package'}</h4>
+                                          </div>
+                                          <div className="package-info-body">
+                                            <div className="package-meta-row">
+                                              <span className="package-duration">
+                                                <svg className="calendar-icon" viewBox="0 0 24 24" width="12" height="12" fill="currentColor">
+                                                  <path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z" />
+                                                </svg>
+                                                {pkg.duration ? `${pkg.duration} Days` : 'Flexible'}
+                                              </span>
+                                              {pkg.price && pkg.price > 0 ? (
+                                                <span className="package-price price-gold">From ${Math.round(pkg.price)}</span>
+                                              ) : (
+                                                <span className="package-price price-request">Price on request</span>
+                                              )}
+                                            </div>
+                                            <p className="package-description" title={pkg.description}>
+                                              {pkg.description || ''}
+                                            </p>
+                                            <button
+                                              className="package-book-btn"
+                                              onClick={() => setActiveDetailPackage(pkg)}
+                                            >
+                                              View Package
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              }
+
+                              if (msg.type === 'booking_ready' && msg.package) {
+                                const pkg = msg.package;
+                                return (
+                                  <div key={msg.id} className="results-bubble-container">
+                                    {msg.text && (
+                                      <div className="bubble katim-ai" style={{ marginBottom: '12px' }}>
+                                        {msg.text}
+                                      </div>
+                                    )}
+                                    <div className="booking-ready-label">
+                                      <span className="booking-ready-dot" />
+                                      Ready to Book
+                                    </div>
+                                    <div className="packages-container">
+                                      <div className="package-card">
+                                        <div className="package-image-wrap">
+                                          {pkg.image ? (
+                                            <img src={pkg.image} alt={pkg.name} className="package-image" />
+                                          ) : (
+                                            <div className="package-image-placeholder">
+                                              <span>🗺️</span>
+                                            </div>
+                                          )}
+                                          <div className="package-gradient-overlay" />
+                                          <h4 className="package-title">{pkg.name || 'Travel Package'}</h4>
+                                        </div>
+                                        <div className="package-info-body">
+                                          <div className="package-meta-row">
+                                            <span className="package-duration">
+                                              <svg className="calendar-icon" viewBox="0 0 24 24" width="12" height="12" fill="currentColor">
+                                                <path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z" />
+                                              </svg>
+                                              {pkg.duration ? `${pkg.duration} Days` : 'Flexible'}
+                                            </span>
+                                            {pkg.price && pkg.price > 0 ? (
+                                              <span className="package-price price-gold">From ${Math.round(pkg.price)}</span>
+                                            ) : (
+                                              <span className="package-price price-request">Price on request</span>
+                                            )}
+                                          </div>
+                                          <p className="package-description" title={pkg.description}>
+                                            {pkg.description || ''}
+                                          </p>
+                                          <button
+                                            className="package-book-btn package-book-btn--cta"
+                                            onClick={() => setActiveDetailPackage(pkg)}
+                                          >
+                                            View &amp; Book Package
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              }
+
+                              if (msg.type === 'package_detail' && msg.package) {
+                                const pkg = msg.package;
+                                return (
+                                  <div key={msg.id} className="results-bubble-container">
+                                    {msg.text && (
+                                      <div className="bubble katim-ai" style={{ marginBottom: '12px' }}>
+                                        {msg.text}
+                                      </div>
+                                    )}
+                                    <div className="packages-container">
+                                      <div className="package-card">
+                                        <div className="package-image-wrap">
+                                          {pkg.image ? (
+                                            <img src={pkg.image} alt={pkg.name} className="package-image" />
+                                          ) : (
+                                            <div className="package-image-placeholder">
+                                              <span>🗺️</span>
+                                            </div>
+                                          )}
+                                          <div className="package-gradient-overlay" />
+                                          <h4 className="package-title">{pkg.name || 'Travel Package'}</h4>
+                                        </div>
+                                        <div className="package-info-body">
+                                          <div className="package-meta-row">
+                                            <span className="package-duration">
+                                              <svg className="calendar-icon" viewBox="0 0 24 24" width="12" height="12" fill="currentColor">
+                                                <path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z" />
+                                              </svg>
+                                              {pkg.duration ? `${pkg.duration} Days` : 'Flexible'}
+                                            </span>
+                                            {pkg.price && pkg.price > 0 ? (
+                                              <span className="package-price price-gold">From ${Math.round(pkg.price)}</span>
+                                            ) : (
+                                              <span className="package-price price-request">Price on request</span>
+                                            )}
+                                          </div>
+                                          <p className="package-description" title={pkg.description}>
+                                            {pkg.description || ''}
+                                          </p>
+                                          <button
+                                            className="package-book-btn"
+                                            onClick={() => setActiveDetailPackage(pkg)}
+                                          >
+                                            View Package
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              }
+
+                              return (
+                                <div key={msg.id} className={`bubble ${isUser ? 'user' : 'katim-ai'}`}>{msg.text}</div>
+                              );
+                            })}
+                          </div>
+                          <div className="msg-time">{firstMsg.time}</div>
                         </div>
-                        <div className="msg-time">{msg.time}</div>
+                      </div>
+                    );
+                  });
+                })()}
+
+                {isTyping && (
+                  <div className="msg-group katim-ai" id="typing-indicator">
+                    <div className="msg-group-content">
+                      <div className="typing-bubble">
+                        <div className="dot"></div>
+                        <div className="dot"></div>
+                        <div className="dot"></div>
                       </div>
                     </div>
-                  );
-                }
-
-                const isUser = msg.role === 'user';
-                return (
-                  <div key={msg.id} className={`msg-row ${isUser ? 'user' : ''}`}>
-                    <div className={`msg-avatar ${isUser ? 'user-av' : 'katim-ai'}`}>
-                      {isUser ? CUSTOMER_INITIALS : '✈️'}
-                    </div>
-                    <div className="msg-content">
-                      <div className="msg-name">{isUser ? 'You' : 'Katim Ai'}</div>
-                      <div className={`bubble ${isUser ? 'user' : 'katim-ai'}`}>{msg.text}</div>
-                      <div className="msg-time">{msg.time}</div>
-                    </div>
                   </div>
-                );
-              })}
+                )}
 
-              {isTyping && (
-                <div className="msg-row" id="typing-indicator">
-                  <div className="msg-avatar katim-ai">✈️</div>
-                  <div className="msg-content">
-                    <div className="msg-name">Katim Ai</div>
-                    <div className="typing-bubble">
-                      <div className="dot"></div>
-                      <div className="dot"></div>
-                      <div className="dot"></div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {activeSuggestions.length > 0 && (
-                <div className="suggestions">
-                  {activeSuggestions.map((s, idx) => (
-                    <button
-                      key={`suggest_${idx}`}
-                      className="suggestion-chip"
-                      onClick={() => handleSuggestionClick(s)}
-                    >
-                      {s}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              <div ref={messagesEndRef} />
+                <div ref={messagesEndRef} />
+              </div>
             </div>
 
             <div className="input-area">
-              <div className="input-wrap">
-                <textarea
-                  ref={textareaRef}
-                  className="msg-input"
-                  placeholder="Ask Katim Ai anything about your trip..."
-                  rows={1}
-                  value={inputValue}
-                  onChange={handleInputChange}
-                  onKeyDown={handleKey}
-                />
-                <button
-                  className="send-btn"
-                  disabled={!inputValue.trim() || isTyping}
-                  onClick={handleSend}
-                >
-                  <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                    <path d="M5 13h11.86l-5.43 5.43 1.42 1.42L21.14 12l-8.29-8.29-1.42 1.42L16.86 11H5v2z"/>
-                  </svg>
-                </button>
+              <div className="input-area-column">
+                {activeSuggestions.length > 0 && (
+                  <div className="input-suggestions">
+                    {activeSuggestions.map((s, idx) => (
+                      <button
+                        key={`suggest_${idx}`}
+                        className="suggestion-chip"
+                        onClick={() => handleSuggestionClick(s)}
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div className="input-wrap">
+                  <textarea
+                    ref={textareaRef}
+                    className="msg-input"
+                    placeholder="Ask Katim Ai anything about your trip..."
+                    rows={1}
+                    value={inputValue}
+                    onChange={handleInputChange}
+                    onKeyDown={handleKey}
+                  />
+                  <button
+                    className="send-btn"
+                    disabled={!inputValue.trim() || isTyping}
+                    onClick={handleSend}
+                  >
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                      <path d="M5 13h11.86l-5.43 5.43 1.42 1.42L21.14 12l-8.29-8.29-1.42 1.42L16.86 11H5v2z" />
+                    </svg>
+                  </button>
+                </div>
+                <div className="input-hint">Search packages · destination questions · connect with our team</div>
               </div>
-              <div className="input-hint">Search packages · destination questions · connect with our team</div>
             </div>
           </div>
         )}
@@ -549,17 +784,29 @@ function App() {
                 <p className="modal-description">{activeDetailPackage.description}</p>
               </div>
 
-              <button
-                className="modal-book-btn"
-                onClick={() => {
-                  const hasPrice = activeDetailPackage.price && activeDetailPackage.price > 0;
-                  const priceDisplay = hasPrice ? `From $${Math.round(activeDetailPackage.price)}` : "Price on request";
-                  handleHandoffClick(`I'm interested in the "${activeDetailPackage.name}" package (${activeDetailPackage.duration || 0} Days) - ${priceDisplay}.`);
-                  setActiveDetailPackage(null);
-                }}
-              >
-                Inquire & Book via WhatsApp
-              </button>
+              <div className="modal-actions">
+                <button
+                  disabled
+                  className="modal-book-btn"
+                  style={{ opacity: 0.6, cursor: 'not-allowed' }}
+                >
+                  Book on Website (Coming Soon)
+                </button>
+                <button
+                  className="modal-whatsapp-btn"
+                  onClick={() => {
+                    const hasPrice = activeDetailPackage.price && activeDetailPackage.price > 0;
+                    const priceDisplay = hasPrice ? `From $${Math.round(activeDetailPackage.price)}` : "Price on request";
+                    handleHandoffClick(`I'm interested in the "${activeDetailPackage.name}" package (${activeDetailPackage.duration || 0} Days) - ${priceDisplay}.`);
+                    setActiveDetailPackage(null);
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" style={{flexShrink:0}}>
+                    <path d="M12.001 2C6.479 2 2.003 6.477 2.003 12c0 1.849.504 3.682 1.463 5.284L2 22l4.833-1.437A9.955 9.955 0 0 0 12.001 22C17.523 22 22 17.523 22 12S17.523 2 12.001 2zm0 18.18a8.162 8.162 0 0 1-4.159-1.139l-.298-.177-3.085.917.877-3.019-.193-.31A8.154 8.154 0 0 1 3.82 12c0-4.512 3.669-8.18 8.181-8.18 4.512 0 8.18 3.668 8.18 8.18 0 4.511-3.668 8.18-8.18 8.18zm4.495-6.123c-.246-.123-1.457-.719-1.683-.801-.226-.082-.39-.123-.554.123-.164.246-.636.801-.78.966-.144.164-.287.185-.533.062-1.53-.765-2.536-1.367-3.544-3.1-.268-.46.268-.428.766-1.425.082-.164.041-.308-.021-.43-.062-.124-.554-1.336-.759-1.83-.2-.481-.404-.414-.554-.421h-.472c-.164 0-.43.062-.656.308-.226.245-.863.844-.863 2.058 0 1.214.884 2.387.997 2.551.113.164 1.748 2.668 4.237 3.741.592.256 1.053.41 1.412.525.594.19 1.135.163 1.562.099 1.01-.154 1.498-.632 1.664-1.055.166-.423.166-.785.103-.86-.062-.082-.226-.144-.472-.267z"/>
+                  </svg>
+                  Book via WhatsApp
+                </button>
+              </div>
             </div>
           </div>
         </div>

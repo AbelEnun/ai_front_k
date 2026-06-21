@@ -1,5 +1,6 @@
 {
   "name": "ai-katim",
+  "description": "Katim AI — an AI-powered travel advisor chatbot for Katim Travels. Built with React + Vite on the frontend and powered by AWS Lambda and Claude (Amazon Bedrock) on the backend to help customers discover, filter, and book travel packages worldwide.",
   "private": true,
   "version": "0.0.0",
   "type": "module",
